@@ -2,6 +2,7 @@ import { createArena } from "/game.js";
 import { supportProfile } from "/support.js";
 import { createPubScene } from "/pub.js";
 import { conversationProgress, inferFanSentiment, checkInFor } from "/conversation.js";
+import { readServiceResponse } from "/http.js";
 
 const $ = (selector) => document.querySelector(selector);
 let data = null;
@@ -307,9 +308,10 @@ async function submitChat(event) {
   input.value = ""; input.readOnly = true; activeRequest = new AbortController(); $("#temperature-ready").hidden = true; $("#chat-send").hidden = true; $("#chat-stop").hidden = false; $("#reset-chat").disabled = true; resizeInput();
   try {
     const response = await fetch("/api/service?action=chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clubId: selected.id, messages: next, frustration: replyTemperature, turnCount: nextTurn }), signal: activeRequest.signal });
-    const result = await response.json(); if (!response.ok) throw new Error(result.error || "The reply is not available right now.");
+    const result = await readServiceResponse(response);
     if (epoch !== clubEpoch) return;
     if (typeof result.message !== "string") throw new Error("The reply was incomplete.");
+    $("#chat-status").textContent = result.demo ? "Preview · prepared example replies" : "OpenAI connected · source-backed research";
     const invitations = applyProgress(result, next, nextTurn);
     pending.remove(); const reply = appendMessage("assistant", result.message, result.sources || [], false, result.closing || "", result.temperature ?? replyTemperature);
     if (invitations.offerVideos) addConversationInvitation(reply, "highlights");
@@ -342,7 +344,7 @@ async function searchHighlights(event) {
   highlightRequest = new AbortController();
   try {
     const response = await fetch("/api/service?action=highlights", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clubId: selected.id, query, frustration, turnCount: conversationTurns }), signal: highlightRequest.signal });
-    const result = await response.json(); if (!response.ok) throw new Error(result.error || "Video search is not available right now."); if (epoch !== clubEpoch) return;
+    const result = await readServiceResponse(response); if (epoch !== clubEpoch) return;
     const videos = [...(result.videos || []), ...(!result.demo ? result.memory?.videos || [] : [])]; renderHighlights(videos);
     $("#highlight-status").textContent = result.demo ? "Preview with curated videos. For any other search, open the direct YouTube results." : "Matching YouTube videos. Availability and embedding depend on the original channel.";
   } catch (error) { if (epoch === clubEpoch && error.name !== "AbortError") $("#highlight-status").textContent = error.message; }
@@ -381,8 +383,15 @@ async function init() {
     const [clubResponse, statusResponse] = await Promise.all([fetch("/clubs.json"), fetch("/api/service?action=status")]);
     if (!clubResponse.ok) throw new Error("Club list unavailable");
     data = await clubResponse.json();
-    if (statusResponse.ok) mode = await statusResponse.json();
-    $("#chat-status").textContent = mode.demo ? "Preview · prepared example replies" : "OpenAI connected · source-backed research";
+    try {
+      mode = await readServiceResponse(statusResponse);
+      $("#chat-status").textContent = mode.demo ? "Preview · prepared example replies" : "OpenAI configured · send a message to test";
+    } catch (error) {
+      mode = { demo: false, unavailable: true };
+      $("#chat-status").textContent = "Chat service unavailable";
+      $("#chat-error").textContent = error.message;
+      $("#chat-error").hidden = false;
+    }
     $("#demo-note").hidden = !mode.demo;
     for (const league of data.leagues) {
       const button = document.createElement("button"); button.type = "button"; button.className = "league-option"; button.setAttribute("aria-label", `Choose ${league.name}`);

@@ -1,9 +1,8 @@
-import { readFileSync } from "node:fs";
+import dataset from "../public/clubs.json" with { type: "json" };
 import { clubMemory, demoReply } from "../lib/memories.js";
 import { supportProfile, reassuranceFor } from "../public/support.js";
 import { applyConversationProgress, inferFanSentiment } from "../public/conversation.js";
 
-const dataset = JSON.parse(readFileSync(new URL("../public/clubs.json", import.meta.url), "utf8"));
 const clubs = new Map(dataset.clubs.map((club) => [club.id, club]));
 const json = (data, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 const string = { type: "string" };
@@ -72,7 +71,12 @@ ${action === "highlights" ? "The user is looking for videos. Focus on YouTube re
     body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-5.4-mini", instructions: prompt, input: messages.map(({ role, content }) => ({ role, content })), tools: [{ type: "web_search", search_context_size: "medium" }], include: ["web_search_call.action.sources"], max_tool_calls: 4, reasoning: { effort: "none" }, temperature: profile.modelTemperature, max_output_tokens: 4000, text: { format: { type: "json_schema", name: "fan_support", strict: true, schema } }, store: false }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(50000)]),
   });
-  const result = await response.json();
+  let result;
+  try { result = await response.json(); }
+  catch {
+    const error = new Error(`OpenAI returned an unreadable response (HTTP ${response.status}). Please try again shortly.`);
+    error.status = 502; throw error;
+  }
   if (!response.ok) {
     const code = result.error?.code;
     if (response.status === 400 && ["temperature", "reasoning", "reasoning.effort"].includes(result.error?.param)) {
